@@ -1,0 +1,98 @@
+{{include_text('defines.yaml')}}
+
+architecture:
+  # ============================================================
+  # Architecture Description
+  # ============================================================
+  version: 0.4
+  nodes: # Top-level is hierarchical
+  - !Container # Top-level system
+    name: system
+  
+  - !Component # DRAM main memory
+    name: DRAM
+    class: DRAM
+    attributes:
+      type: "LPDDR4"
+      width: 64
+      datawidth: ENCODED_OUTPUT_BITS
+
+  - !Container # Timely accelerator
+    name: timely
+    <<<: [*container_defaults]
+    attributes:
+      technology: TECHNOLOGY
+
+  - !Container
+    name: subchip
+    <<<: [*container_defaults]
+    spatial: {meshX: NUM_CHIPS}
+
+  - !Component # Column readout (ADC)
+    name: tdc
+    <<<: [*component_defaults, *keep_outputs, *no_coalesce]
+    subclass: timely_tdc
+    attributes: {width: ENCODED_OUTPUT_BITS, <<<: *cim_component_attributes}
+
+  - !Component # Integrator + comparator
+    name: integrate_compare
+    <<<: [*component_defaults, *keep_outputs, *no_coalesce]
+    subclass: timely_charging_comparator
+    attributes: {width: 1, <<<: *cim_component_attributes}
+
+  - !Component 
+    name: iadder
+    <<<: [*component_defaults, *keep_outputs, *no_temporal_reuse]
+    subclass: iadder
+    attributes: {width: 1, <<<: *cim_component_attributes}
+    
+  - !Component # Column readout (ADC)
+    name: column_drivers # P-SubBufs
+    <<<: [*component_defaults, *keep_outputs, *no_coalesce]
+    subclass: column_drivers
+    attributes: {width: ENCODED_OUTPUT_BITS, <<<: *cim_component_attributes}
+
+  {{ignoreme_placeholder | default('') | indent(2)}}
+
+  - !Component # DAC parts
+    name: dtc
+    <<<: [*component_defaults, *keep_inputs, *no_coalesce]
+    subclass: timely_dtc
+    attributes: {width: DAC_RESOLUTION, <<<: *cim_component_attributes}
+
+  # - !Component # Row drivers feed inputs onto the rows of the array
+  #   name: row_drivers
+  #   <<<: [*component_defaults, *keep_inputs, *temporal_reuse]
+  #   subclass: input_row_drivers
+  #   attributes: {width: DAC_RESOLUTION, depth: ARRAY_WORDLINES, <<: *cim_component_attributes, temporal_spiking: true}
+
+  - !Container # Crossbar
+    name: crossbar
+    <<<: [*container_defaults]
+    attributes: {meshX: NUM_CB_X, meshY: NUM_CB_Y}
+
+  - !Component
+    name: xSubBufs
+    <<<: [*component_defaults, *keep_inputs, *temporal_reuse]
+    subclass: timely_xsubbuf
+    attributes: {width: 1, depth: 256, <<: *cim_component_attributes}
+
+  - !Container # Each column stores a different weight slice. Columns share inputs.
+    name: column
+    <<<: [*container_defaults, *spatial_must_reuse_inputs]
+    spatial: {meshX: 256}
+    constraints: {spatial: {maximize_dims: [Y, M]}}
+    max_utilization: {spatial: {factors: [('M=' + str(column.get_fanout()))]}}
+
+  - !Container # Each row receives a different input. Rows share outputs.
+    name: row
+    <<<: [*container_defaults, *spatial_must_reuse_outputs]
+    spatial: {meshY: 256}
+    constraints: {spatial: {maximize_dims: [C, R, S]}}
+    max_utilization: {spatial: {factors: [('C=' + str(row.get_fanout()))]}}
+
+  - !Component # CiM unit stores weights and computes MACs. Defined in include/defines.yaml.
+    <<<: *cim_unit 
+
+  - !Hierarchical           # Virtualize an XxYxZ-bit MAC as multiple MAC units.
+    nodes: *virtualized_mac # Defined in include/defines.yaml.

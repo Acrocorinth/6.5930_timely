@@ -1,0 +1,7 @@
+mapper:
+  version: 0.4
+  optimization-metric: [ delay, energy ]
+  algorithm:           linear-pruned
+  timeout:             0
+  victory-condition:   0
+  search-size:         0
